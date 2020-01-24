@@ -203,10 +203,28 @@ void MatrixCollect::Write(std::string filename) {
 
   // Write a TH1D of the eigenvalues
   TH1D *EigenVals = new TH1D("Eigen_Values", "Eigen_Values", npars, 0, npars);
+  double eigentot = 0;
   for (int i = 0; i < npars; ++i) {
     EigenVals->SetBinContent(i+1, (eigen->GetEigenValues())(i));
+    eigentot += (eigen->GetEigenValues())(i);
   }
   EigenVals->Write("Eigen_Values");
+
+  // Write a TH1D of the eigenvalues
+  TH1D *EigenVals_ratio = new TH1D("Eigen_Values_Ratio", "Eigen_Values_Ratio", npars, 0, npars);
+  for (int i = 0; i < npars; ++i) {
+    EigenVals_ratio->SetBinContent(i+1, (eigen->GetEigenValues())(i)/eigentot);
+  }
+  EigenVals_ratio->Write("Eigen_Values_ratio");
+
+  // Write a TH1D of the eigenvalues
+  double eigen_cum = 0;
+  TH1D *EigenVals_cum = new TH1D("Eigen_Values_Cum", "Eigen_Values_Cum", npars, 0, npars);
+  for (int i = 0; i < npars; ++i) {
+    eigen_cum += (eigen->GetEigenValues())(i);
+    EigenVals_cum->SetBinContent(i+1, eigen_cum/eigentot);
+  }
+  EigenVals_cum->Write("Eigen_Values_cum");
 
   // Loop over each of the new matrices
   TH2D *temp_th2 = new TH2D("temp_th2", "temp_th2", npars, 0, npars, npars, 0, npars);
@@ -248,7 +266,8 @@ void makedecomp(std::string filename) {
   TFile *file = new TFile(filename.c_str());
 
   // The collection of matrices
-  TMatrixDSym *mat = (TMatrixDSym*)file->Get("Covariance_Matrix")->Clone();
+  //TMatrixDSym *mat = (TMatrixDSym*)file->Get("Covariance_Matrix")->Clone();
+  TMatrixDSym *mat = (TMatrixDSym*)file->Get("nddet_cov")->Clone();
 
   // Create the large object
   MatrixCollect matobj(mat);
