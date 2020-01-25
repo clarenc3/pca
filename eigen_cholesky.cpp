@@ -103,7 +103,7 @@ int main() {
   cholmat.T();
 
   // Make throws
-  const int nthrows = 1000000;
+  const int nthrows = 10000000;
   TH2D *throws = new TH2D("throws", "throws;parameter number; parameter value", ndim, 0, ndim, 100, -1, 3);
   TRandom3 *rand = new TRandom3(5);
 
@@ -111,14 +111,29 @@ int main() {
 
   // The random throws
   TVectorD randoms(ndim);
+  // Now let's also make some throws in the eigen value basis and transform out into the actual parameter space
+  TVectorD randoms_eigen(nvals);
+
   for (int i = 0; i < nthrows; ++i) {
     for (int j = 0; j < ndim; ++j) {
       randoms(j) = rand->Gaus(0,1);
+      if (j < nvals) randoms_eigen(j) = rand->Gaus(0,1);
     }
+    /*
+    std::cout << "Randoms in eigen basis:" << std::endl;
+    randoms_eigen.Print();
+    std::cout << "Transfer matrix: " << std::endl;
+    transfer.Print();
+    std::cout << "Transposed transfer matrix: " << std::endl;
+    transferT.Print();
+    */
+    TVectorD rands_of_eigen = (transfer*randoms_eigen);
+    //std::cout << "randoms_eigen*transfer:" << std::endl;
+    //rands_eigen.Print();
+
     // X = AZ
-    //TVectorD rands = chol.GetU()*randoms;
-    //
     TVectorD rands = (cholmat)*randoms;
+    TVectorD rands_chol_eigen = (cholmat)*rands_of_eigen;
 
     // X = E sqrt(eigen) Z
     TVectorD rands_eigen = evecs*fullsqrt*randoms;
@@ -128,7 +143,9 @@ int main() {
     //rands_eigen.Print();
     for (int j = 0; j < ndim; ++j) {
       throws->Fill(j, pars(j)+rands(j));
-      throws_eigen->Fill(j, pars(j)+rands_eigen(j));
+      throws_eigen->Fill(j, pars(j)+rands_chol_eigen(j));
+
+      //throws_eigen->Fill(j, pars(j)+rands_eigen(j));
       //throws->Fill(j, rands(j));
       //throws_eigen->Fill(j, rands_eigen(j));
     }
@@ -184,6 +201,7 @@ int main() {
   throw1d->SetLineColor(kBlue);
   throw1d_eigen->Draw("same");
   //truth->Draw("same");
+  //throw1d_eigen->SetLineStyle(kDashed);
   throw1d_eigen->SetLineColor(kRed);
   canv->Print("asdf.pdf");
   canv->Print("asdf.pdf]");
@@ -194,7 +212,6 @@ int main() {
   throw1d->Write();
   throw1d_eigen->Write();
   file->Close();
-
 
   return 0;
 }
