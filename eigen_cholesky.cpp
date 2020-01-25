@@ -36,6 +36,7 @@ int main() {
   for (int i = 0; i < ndim; ++i) {
     for (int j = 0; j < ndim; ++j) {
       mat(i,j) = corr(i,j)*uncert(i)*uncert(j);
+      //mat(i,j) = corr(i,j);
     }
   }
 
@@ -98,15 +99,15 @@ int main() {
   //std::cout << "Cholesky of original: " << std::endl;
   TDecompChol chol(mat);
   chol.Decompose();
-  //chol.Print();
-
+  TMatrixD cholmat = chol.GetU();
+  cholmat.T();
 
   // Make throws
-  const int nthrows = 10000000;
-  TH2D *throws = new TH2D("throws", "throws;parameter number; parameter value", ndim, 0, ndim, 1000, -1, 3);
+  const int nthrows = 1000000;
+  TH2D *throws = new TH2D("throws", "throws;parameter number; parameter value", ndim, 0, ndim, 100, -1, 3);
   TRandom3 *rand = new TRandom3(5);
 
-  TH2D *throws_eigen = new TH2D("throws_eigen", "throws_eigen;parameter number; parameter value", ndim, 0, ndim, 1000, -1, 3);
+  TH2D *throws_eigen = new TH2D("throws_eigen", "throws_eigen;parameter number; parameter value", ndim, 0, ndim, 100, -1, 3);
 
   // The random throws
   TVectorD randoms(ndim);
@@ -115,7 +116,9 @@ int main() {
       randoms(j) = rand->Gaus(0,1);
     }
     // X = AZ
-    TVectorD rands = chol.GetU()*randoms;
+    //TVectorD rands = chol.GetU()*randoms;
+    //
+    TVectorD rands = (cholmat)*randoms;
 
     // X = E sqrt(eigen) Z
     TVectorD rands_eigen = evecs*fullsqrt*randoms;
@@ -126,6 +129,8 @@ int main() {
     for (int j = 0; j < ndim; ++j) {
       throws->Fill(j, pars(j)+rands(j));
       throws_eigen->Fill(j, pars(j)+rands_eigen(j));
+      //throws->Fill(j, rands(j));
+      //throws_eigen->Fill(j, rands_eigen(j));
     }
   }
 
@@ -144,23 +149,50 @@ int main() {
   throws_eigen->Draw("colz");
   canv->Print("asdf.pdf");
   TH1D *throw1d = new TH1D("throws1d", "throws1d; parameter number; parameter value", ndim, 0, ndim);
+  TH1D *throw1d_eigen = new TH1D("throws1d_eigen", "throws1d_eigen; parameter number; parameter value", ndim, 0, ndim);
+  TH1D *truth = new TH1D("truth1d", "truth; parameter number; parameter value", ndim, 0, ndim);
+
+  truth->SetBinContent(1, 0.15);
+  truth->SetBinContent(2, 0.15);
+  truth->SetBinContent(3, 0.40);
+  truth->SetLineColor(kBlack);
   for (int i = 0; i < ndim; ++i) {
     TH1D *projy = throws->ProjectionY("_py", i+1, i+1);
+    TH1D *projy2 = throws_eigen->ProjectionY("_py", i+1, i+1);
     canv->Clear();
     projy->Draw();
+    projy->SetLineColor(kBlue);
+    projy2->SetLineColor(kRed);
+    projy2->Draw("same");
     canv->Print("asdf.pdf");
-    throw1d->SetBinContent(i+1, projy->GetMean());
-    throw1d->SetBinError(i+1, projy->GetRMS());
+    //throw1d->SetBinContent(i+1, projy->GetMean());
+    throw1d->SetBinContent(i+1, projy->GetRMS()-truth->GetBinContent(i+1));
+    //throw1d_eigen->SetBinContent(i+1, projy2->GetMean());
+    throw1d_eigen->SetBinContent(i+1, projy2->GetRMS()-truth->GetBinContent(i+1));
   }
+
+  throw1d->SetTitle("Residual");
+  throw1d->GetYaxis()->SetTitle("Residual (estimate-truth)");
   canv->Clear();
+  double maximum = throw1d->GetMaximum() > fabs(throw1d->GetMinimum()) ? throw1d->GetMaximum() : fabs(throw1d->GetMinimum());
+  maximum = throw1d_eigen->GetMaximum() > maximum ? throw1d_eigen->GetMaximum() : maximum;
+  maximum = fabs(throw1d_eigen->GetMinimum()) > maximum ? fabs(throw1d_eigen->GetMinimum()) : maximum;
+  maximum *= 1.2;
+  throw1d->SetMinimum(-1*maximum);
+  throw1d->SetMaximum(maximum);
   throw1d->Draw();
+  throw1d->SetLineColor(kBlue);
+  throw1d_eigen->Draw("same");
+  //truth->Draw("same");
+  throw1d_eigen->SetLineColor(kRed);
   canv->Print("asdf.pdf");
   canv->Print("asdf.pdf]");
 
   TFile *file = new TFile("asdf.root", "recreate");
   throws->Write();
-  throw1d->Write();
   throws_eigen->Write();
+  throw1d->Write();
+  throw1d_eigen->Write();
   file->Close();
 
 
