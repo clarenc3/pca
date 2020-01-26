@@ -12,35 +12,6 @@
 #include "TFile.h"
 
 int main(int argc, char** argv) {
-  /*
-  // Make the original covariance matrix
-  // Just a jokey one from TN315
-  const int ndim = 3;
-  TMatrixDSym corr(ndim);
-  corr(0,0) = 1.00;
-  corr(0,1) = -0.83;
-  corr(0,2) = -0.01;
-  corr(1,0) = -0.83;
-  corr(1,1) = 1.00;
-  corr(1,2) = -0.31;
-  corr(2,0) = -0.01;
-  corr(2,1) = -0.31;
-  corr(2,2) = 1.00;
-
-  // Now make the correlation matrix to a covariance matrix
-  TVectorD uncert(ndim);
-  uncert(0) = 0.15;
-  uncert(1) = 0.15;
-  uncert(2) = 0.40;
-
-  TMatrixDSym mat(ndim);
-  for (int i = 0; i < ndim; ++i) {
-    for (int j = 0; j < ndim; ++j) {
-      mat(i,j) = corr(i,j)*uncert(i)*uncert(j);
-      //mat(i,j) = corr(i,j);
-    }
-  }
-  */
 
   if (argc != 2) {
     std::cerr << "Please give filename" << std::endl;
@@ -49,77 +20,59 @@ int main(int argc, char** argv) {
   std::string filename = std::string(argv[1]);
 
   TFile *file = new TFile(filename.c_str());
-  TMatrixDSym *mat = (TMatrixDSym*)file->Get("nddet_cov")->Clone();
-  if (mat == NULL) {
+  TMatrixDSym *input = (TMatrixDSym*)file->Get("nddet_cov")->Clone();
+  //TMatrixD *input = (TMatrixD*)file->Get("total_flux_cov");
+  if (input == NULL) {
     std::cerr << "Couldn't find nddet_cov in " << filename << std::endl;
     return -1;
   }
-  int ndim = mat->GetNcols();
+  int ndim = input->GetNcols();
 
-  //std::cout << "Original cov matrix:" << std::endl;
-  //mat.Print();
+  // Convert to correlation matrix
+  TMatrixDSym *corr = new TMatrixDSym(ndim);
+  for (int i = 0; i < ndim; ++i) {
+    for (int j = 0; j < ndim; ++j) {
+      //(*corr)(i,j) = (*input)(i,j)/sqrt((*input)(i,i)*(*input)(j,j));
+      (*corr)(i,j) = (*input)(i,j);
+    }
+  }
+
+  TMatrixDSym *mat = corr;
 
   // Make the eigenvectors
   TMatrixDSymEigen eigen(*mat);
   TVectorD evals = eigen.GetEigenValues();
   TMatrixD evecs = eigen.GetEigenVectors();
 
-  //std::cout << "Eigenvalues:" << std::endl;
-  //evals.Print();
-  //std::cout << "Eigenvectors:" << std::endl;
-  //evecs.Print();
-
   // Start the PCA
   int nvals = ndim*1/2;
   TMatrixD transfer(evecs.GetSub(0, evecs.GetNcols()-1, 0, nvals-1));
-  //std::cout << "Transfer matrix:" << std::endl;
-  //transfer.Print();
 
   TMatrixD transferT(transfer);
   transferT.T();
-  //std::cout << "Transfer matrix transpose:" << std::endl;
-  //transferT.Print();
 
   // Make our parameter values
-  TVectorD *pars = (TVectorD*)file->Get("det_weights");
-  //pars(0) = 1.07;
-  //pars(1) = 0.96;
-  //pars(2) = 0.96;
+  TVectorD *pars = new TVectorD(ndim);
+  for (int i = 0; i < ndim; ++i) (*pars)(i)=1.0;
 
-  // The original transfer
-  //TMatrixD evecsT(evecs);
-  //evecsT.T();
-  //std::cout << "Full transfer:" << std::endl;
-  //(evecsT*pars).Print();
-
-  //std::cout << "Partial transfer:" << std::endl;
-  //(transferT*pars).Print();
-
+  // The full eigenvalue diagonal matrix
   TMatrixD fullsqrt(ndim, ndim);
   for (int i = 0; i < ndim; ++i) fullsqrt(i,i) = sqrt(evals(i));
 
   // Make the reduced eigen val matrix
   TMatrixD reduced(nvals, nvals);
   for (int i = 0; i < nvals; ++i) reduced(i,i) = evals(i);
-  //std::cout << "Reduced eigen: " << std::endl;
-  //reduced.Print();
 
   // New corr matrix
-  //std::cout << "Recomposed matrix:" << std::endl;
   TMatrixD recomposed = (transfer*reduced*transferT);
-  //recomposed.Print();
 
-  //std::cout << "Original matrix:" << std::endl;
-  //mat.Print();
-
-  //std::cout << "Cholesky of original: " << std::endl;
   TDecompChol chol(*mat);
   chol.Decompose();
   TMatrixD cholmat = chol.GetU();
   cholmat.T();
 
   // Make throws
-  const int nthrows = 1000;
+  const int nthrows = 10000;
   TH2D *throws = new TH2D("throws", "throws;parameter number; parameter value", ndim, 0, ndim, 100, 0, 2);
   TRandom3 *rand = new TRandom3(5);
 
@@ -137,35 +90,17 @@ int main(int argc, char** argv) {
       randoms(j) = rand->Gaus(0,1);
       if (j < nvals) randoms_eigen(j) = rand->Gaus(0,1);
     }
-    /*
-    std::cout << "Randoms in eigen basis:" << std::endl;
-    randoms_eigen.Print();
-    std::cout << "Transfer matrix: " << std::endl;
-    transfer.Print();
-    std::cout << "Transposed transfer matrix: " << std::endl;
-    transferT.Print();
-    */
     TVectorD rands_of_eigen = (transfer*randoms_eigen);
-    //std::cout << "randoms_eigen*transfer:" << std::endl;
-    //rands_eigen.Print();
 
     // X = AZ
     TVectorD rands = (cholmat)*randoms;
     TVectorD rands_chol_eigen = (cholmat)*rands_of_eigen;
 
     // X = E sqrt(eigen) Z
-    TVectorD rands_eigen = evecs*fullsqrt*randoms;
-    //(reduced*evecs).Print();
-    //full.Print();
-    //evecs.Print();
-    //rands_eigen.Print();
+    //TVectorD rands_eigen = evecs*fullsqrt*randoms;
     for (int j = 0; j < ndim; ++j) {
       throws->Fill(j, (*pars)(j)+rands(j));
       throws_eigen->Fill(j, (*pars)(j)+rands_chol_eigen(j));
-
-      //throws_eigen->Fill(j, pars(j)+rands_eigen(j));
-      //throws->Fill(j, rands(j));
-      //throws_eigen->Fill(j, rands_eigen(j));
     }
   }
 
@@ -218,8 +153,6 @@ int main(int argc, char** argv) {
   throw1d->Draw();
   throw1d->SetLineColor(kBlue);
   throw1d_eigen->Draw("same");
-  //truth->Draw("same");
-  //throw1d_eigen->SetLineStyle(kDashed);
   throw1d_eigen->SetLineColor(kRed);
   canv->Print(canvname+".pdf");
   canv->Print(canvname+".pdf]");
