@@ -11,7 +11,8 @@
 #include "TStyle.h"
 #include "TFile.h"
 
-int main() {
+int main(int argc, char** argv) {
+  /*
   // Make the original covariance matrix
   // Just a jokey one from TN315
   const int ndim = 3;
@@ -39,12 +40,27 @@ int main() {
       //mat(i,j) = corr(i,j);
     }
   }
+  */
+
+  if (argc != 2) {
+    std::cerr << "Please give filename" << std::endl;
+    return -1;
+  }
+  std::string filename = std::string(argv[1]);
+
+  TFile *file = new TFile(filename.c_str());
+  TMatrixDSym *mat = (TMatrixDSym*)file->Get("nddet_cov")->Clone();
+  if (mat == NULL) {
+    std::cerr << "Couldn't find nddet_cov in " << filename << std::endl;
+    return -1;
+  }
+  int ndim = mat->GetNcols();
 
   //std::cout << "Original cov matrix:" << std::endl;
   //mat.Print();
 
   // Make the eigenvectors
-  TMatrixDSymEigen eigen(mat);
+  TMatrixDSymEigen eigen(*mat);
   TVectorD evals = eigen.GetEigenValues();
   TMatrixD evecs = eigen.GetEigenVectors();
 
@@ -54,7 +70,7 @@ int main() {
   //evecs.Print();
 
   // Start the PCA
-  const int nvals = 2;
+  int nvals = ndim*1/2;
   TMatrixD transfer(evecs.GetSub(0, evecs.GetNcols()-1, 0, nvals-1));
   //std::cout << "Transfer matrix:" << std::endl;
   //transfer.Print();
@@ -65,10 +81,10 @@ int main() {
   //transferT.Print();
 
   // Make our parameter values
-  TVectorD pars(ndim);
-  pars(0) = 1.07;
-  pars(1) = 0.96;
-  pars(2) = 0.96;
+  TVectorD *pars = (TVectorD*)file->Get("det_weights");
+  //pars(0) = 1.07;
+  //pars(1) = 0.96;
+  //pars(2) = 0.96;
 
   // The original transfer
   //TMatrixD evecsT(evecs);
@@ -97,17 +113,17 @@ int main() {
   //mat.Print();
 
   //std::cout << "Cholesky of original: " << std::endl;
-  TDecompChol chol(mat);
+  TDecompChol chol(*mat);
   chol.Decompose();
   TMatrixD cholmat = chol.GetU();
   cholmat.T();
 
   // Make throws
-  const int nthrows = 10000000;
-  TH2D *throws = new TH2D("throws", "throws;parameter number; parameter value", ndim, 0, ndim, 100, -1, 3);
+  const int nthrows = 1000;
+  TH2D *throws = new TH2D("throws", "throws;parameter number; parameter value", ndim, 0, ndim, 100, 0, 2);
   TRandom3 *rand = new TRandom3(5);
 
-  TH2D *throws_eigen = new TH2D("throws_eigen", "throws_eigen;parameter number; parameter value", ndim, 0, ndim, 100, -1, 3);
+  TH2D *throws_eigen = new TH2D("throws_eigen", "throws_eigen;parameter number; parameter value", ndim, 0, ndim, 100, 0, 2);
 
   // The random throws
   TVectorD randoms(ndim);
@@ -115,6 +131,8 @@ int main() {
   TVectorD randoms_eigen(nvals);
 
   for (int i = 0; i < nthrows; ++i) {
+
+    if (i % (nthrows/20) == 0) std::cout << "On throw " << i << "/" << nthrows << " (" << double(i)/nthrows*100 << "%)" << std::endl;
     for (int j = 0; j < ndim; ++j) {
       randoms(j) = rand->Gaus(0,1);
       if (j < nvals) randoms_eigen(j) = rand->Gaus(0,1);
@@ -142,8 +160,8 @@ int main() {
     //evecs.Print();
     //rands_eigen.Print();
     for (int j = 0; j < ndim; ++j) {
-      throws->Fill(j, pars(j)+rands(j));
-      throws_eigen->Fill(j, pars(j)+rands_chol_eigen(j));
+      throws->Fill(j, (*pars)(j)+rands(j));
+      throws_eigen->Fill(j, (*pars)(j)+rands_chol_eigen(j));
 
       //throws_eigen->Fill(j, pars(j)+rands_eigen(j));
       //throws->Fill(j, rands(j));
@@ -152,7 +170,8 @@ int main() {
   }
 
   TCanvas *canv = new TCanvas("canv", "canv", 1024, 1024);
-  canv->Print("asdf.pdf[");
+  TString canvname = filename+Form("%i_pdf", nvals);
+  canv->Print(canvname+".pdf[");
   canv->cd();
   gStyle->SetOptStat(0);
   gStyle->SetNumberContours(255);
@@ -161,31 +180,30 @@ int main() {
   throws->Scale(1./nthrows);
   throws_eigen->Scale(1./nthrows);
   throws->Draw("colz");
-  canv->Print("asdf.pdf");
+  canv->Print(canvname+".pdf");
   canv->Clear();
   throws_eigen->Draw("colz");
-  canv->Print("asdf.pdf");
+  canv->Print(canvname+".pdf");
   TH1D *throw1d = new TH1D("throws1d", "throws1d; parameter number; parameter value", ndim, 0, ndim);
   TH1D *throw1d_eigen = new TH1D("throws1d_eigen", "throws1d_eigen; parameter number; parameter value", ndim, 0, ndim);
-  TH1D *truth = new TH1D("truth1d", "truth; parameter number; parameter value", ndim, 0, ndim);
 
-  truth->SetBinContent(1, 0.15);
-  truth->SetBinContent(2, 0.15);
-  truth->SetBinContent(3, 0.40);
-  truth->SetLineColor(kBlack);
   for (int i = 0; i < ndim; ++i) {
     TH1D *projy = throws->ProjectionY("_py", i+1, i+1);
     TH1D *projy2 = throws_eigen->ProjectionY("_py", i+1, i+1);
     canv->Clear();
-    projy->Draw();
     projy->SetLineColor(kBlue);
     projy2->SetLineColor(kRed);
+    double maximum = projy->GetMaximum() > projy2->GetMaximum() ? projy->GetMaximum() : projy2->GetMaximum();
+    projy->Draw();
     projy2->Draw("same");
-    canv->Print("asdf.pdf");
+    projy->GetYaxis()->SetRangeUser(0, maximum*1.2);
+    canv->Print(canvname+".pdf");
     //throw1d->SetBinContent(i+1, projy->GetMean());
-    throw1d->SetBinContent(i+1, projy->GetRMS()-truth->GetBinContent(i+1));
+    throw1d->SetBinContent(i+1, projy->GetRMS()-sqrt((*mat)(i,i)));
     //throw1d_eigen->SetBinContent(i+1, projy2->GetMean());
-    throw1d_eigen->SetBinContent(i+1, projy2->GetRMS()-truth->GetBinContent(i+1));
+    throw1d_eigen->SetBinContent(i+1, projy2->GetRMS()-sqrt((*mat)(i,i)));
+    delete projy;
+    delete projy2;
   }
 
   throw1d->SetTitle("Residual");
@@ -203,15 +221,16 @@ int main() {
   //truth->Draw("same");
   //throw1d_eigen->SetLineStyle(kDashed);
   throw1d_eigen->SetLineColor(kRed);
-  canv->Print("asdf.pdf");
-  canv->Print("asdf.pdf]");
+  canv->Print(canvname+".pdf");
+  canv->Print(canvname+".pdf]");
 
-  TFile *file = new TFile("asdf.root", "recreate");
+
+  TFile *out = new TFile(Form("%s_%i_anal.root", filename.c_str(), nvals), "recreate");
   throws->Write();
   throws_eigen->Write();
   throw1d->Write();
   throw1d_eigen->Write();
-  file->Close();
+  out->Close();
 
   return 0;
 }
