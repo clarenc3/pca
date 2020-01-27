@@ -15,7 +15,7 @@
 #include "TROOT.h"
 #include "TPad.h"
 
-const int nthrows = 10000;
+const int nthrows = 20000;
 
 class MatrixCollect {
 
@@ -109,6 +109,13 @@ void MatrixCollect::ConstructNew() {
 
     // The reduced eigenvector matrix
     TMatrixD transfer_temp(eigenvec->GetSub(0, eigenvec->GetNcols()-1, 0, nvals-1));
+
+    //std::cout << "Transfer:" << std::endl;
+    //transfer_temp.Print();
+    //std::cout << "eigenvec:" << std::endl;
+    //eigenvec->Print();
+    //throw;
+
     transfer.push_back(transfer_temp);
 
     // The transposed transfer matrix
@@ -156,7 +163,7 @@ void MatrixCollect::TestMatrix() {
   cholmat.T();
 
   for (int i = 0; i < ncuts; ++i) {
-    TH2D *eigenthrows = new TH2D(Form("EigenThrow_%i", transfer[i].GetNcols()), Form("EigenThrow_%i;Parameter number; Parameter value", transfer[i].GetNcols()), npars, 0, npars, 1000, -1, 1);
+    TH2D *eigenthrows = new TH2D(Form("EigenThrow_%i", transfer[i].GetNcols()), Form("EigenThrow_%i;Parameter number; Parameter value", transfer[i].GetNcols()), npars, 0, npars, 1000, -2.5, 2.5);
     Throws.push_back(eigenthrows);
   }
 
@@ -213,9 +220,15 @@ void MatrixCollect::Write(std::string filename) {
   for (int i = 0; i < npars; ++i) {
     for (int j = 0; j < npars; ++j) {
       OrigTH2->SetBinContent(i+1, j+1, (*origmat)(i, j));
+      OrigTH2->SetBinError(i+1, j+1, 0);
     }
   }
   OrigTH2->Write("Original_Matrix");
+
+  // Let's make a diagonal only also
+  TH1D *err = new TH1D("Uncertainty", "Uncertainty", npars, 0, npars);
+  for (int i = 0; i < npars; ++i) err->SetBinContent(i+1, sqrt((*origmat)(i,i)));
+  err->Write();
 
   // Write a TH1D of the eigenvalues
   TH1D *EigenVals = new TH1D("Eigen_Values", "Eigen_Values", npars, 0, npars);
@@ -259,21 +272,45 @@ void MatrixCollect::Write(std::string filename) {
       }
     }
 
-    temp_th2->Write(Form("Recreated_%i", i));
+    temp_th2->Write(Form("Recreated_%i", transfer[i].GetNcols()));
     // Copy
     temp_th2->Divide(OrigTH2);
     temp_th2->SetMinimum(0.5);
     temp_th2->SetMaximum(1.5);
     temp_th2_copy->SetMinimum(-0.1);
     temp_th2_copy->SetMaximum(0.1);
-    temp_th2->Write(Form("Recreated_%i_RelNom", i));
+    temp_th2->Write(Form("Recreated_%i_RelNom", transfer[i].GetNcols()));
     // Make percentage difference
-    temp_th2_copy->Write(Form("Recreated_%i_RelNomPercent", i));
+    temp_th2_copy->Write(Form("Recreated_%i_RelNomPercent", transfer[i].GetNcols()));
 
-    // And now the throws
+    // Make a temp 1D object
+    TH1D *parvals = new TH1D(Form("Parvals_%i", transfer[i].GetNcols()), Form("Parvals_%i;Parameter number;Parameter value", transfer[i].GetNcols()), Throws[i]->GetXaxis()->GetNbins(), 0, Throws[i]->GetXaxis()->GetNbins());
+    TH1D *parerr = new TH1D(Form("Parerr_%i", transfer[i].GetNcols()), Form("Parerr_%i;Parameter number;Parameter uncertainty", transfer[i].GetNcols()), Throws[i]->GetXaxis()->GetNbins(), 0, Throws[i]->GetXaxis()->GetNbins());
+
+    // Now make the 1D central value and error band
+    for (int j = 0; j < npars; ++j) {
+      // Project each of the 2D throws vs parameter onto the 1D axis, getting mean and rms
+      TH1D *projecty = (TH1D*)Throws[i]->ProjectionY("_py", j+1, j+1);
+      parvals->SetBinContent(j+1, projecty->GetMean());
+      parerr->SetBinContent(j+1, projecty->GetRMS());
+    }
+
+    // Loop over bins and make relative the actual value
+    TH1D *parerr_rel = (TH1D*)parerr->Clone(Form("%s_rel", parerr->GetName()));
+    parerr_rel->GetYaxis()->SetTitle("Relative difference to actual uncertainty");
+    for (int j = 0; j < npars; ++j) {
+      parerr_rel->SetBinContent(j+1, (parerr_rel->GetBinContent(j+1)-sqrt((*origmat)(j,j)))/sqrt((*origmat)(j,j)));
+    }
+
+    parvals->Write();
+    parerr->Write();
+    parerr_rel->Write();
+    // And write the throws
     Throws[i]->Write();
+    delete parvals;
+    delete parerr;
+    delete parerr_rel;
   }
-
 
   // Close the file
   std::cout << "Wrote output to " << output->GetName() << std::endl;
@@ -304,11 +341,9 @@ void makedecomp(std::string filename) {
 }
 
 int main(int argc, char **argv) {
-
   if (argc != 2) {
     std::cout << "Need one argument, the filename" << std::endl;
     return -1;
   }
-
   makedecomp(std::string(argv[1]));
 }
