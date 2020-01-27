@@ -15,7 +15,7 @@
 #include "TROOT.h"
 #include "TPad.h"
 
-const int nthrows = 1;
+const int nthrows = 10000;
 
 class MatrixCollect {
 
@@ -35,49 +35,48 @@ class MatrixCollect {
     // The original matrix
     TMatrixDSym *origmat;
     // The eigenvalues
-    //TVectorD *eigenval;
+    TVectorD *eigenval;
     // The eigenvectors
-    //TMatrixD *eigenvec;
+    TMatrixD *eigenvec;
+
     // Number of parameters
     int npars;
 
-    int nvals;
-
     // Number of cuts
     int ncuts;
-    // Vector of cuts
-    std::vector<int> cuts;
-    // The transfer matrix
+
+    // The transfer matrices for all the cuts
     std::vector<TMatrixD> transfer;
-    // The transposed transfer matrix
+
+    // The transposed transfer matrices for all the cuts
     std::vector<TMatrixD> transferT;
-    // The updated matrix
+
+    // The updated matrix for all the cuts
     std::vector<TMatrixD*> newmat;
 
+    // The histograms for each of the cuts
+    std::vector<TH2D*> Throws;
 };
 
 // Clone the matrices, set up eigen matrix
 MatrixCollect::MatrixCollect(TMatrixDSym *input) {
 
   std::cout << "Input matrix with " << input->GetNrows() << "x" << input->GetNcols() << " (rows x columns)" << std::endl;
-  //input->Print();
 
+  // Clone the matrix
   origmat = new TMatrixDSym(*input);
-  //origmat.SetMatrixArray(input->GetMatrixArray());
 
   // Then construct the TMatrixDEigen
   eigen = new TMatrixDSymEigen(*input);
 
-  // Get the eigen values
-  //std::cout << eigen->GetEigenValues() << std::endl;
+  // Copy over the eigen values and vectors
+  eigenval = new TVectorD(eigen->GetEigenValues());
+  eigenvec = new TMatrixD(eigen->GetEigenVectors());
 
-  //eigenval = &(eigen->GetEigenValues());
-  //eigenvec = &(eigen->GetEigenVectors());
-
-  // The number of parameters
+  // The number of parameters in total
   npars = origmat->GetNrows();
 
-  std::cout << "Done constructing" << std::endl;
+  std::cout << "Done constructing eigen matrix, values and vectors" << std::endl;
 }
 
 int MatrixCollect::HowMany(double cut) {
@@ -99,20 +98,17 @@ void MatrixCollect::SetLimits(TH2D *plot) {
 // Construct the reduced matrix
 void MatrixCollect::ConstructNew() {
 
-  // Convenience
-  TMatrixD EigenVectors = eigen->GetEigenVectors();
-  TVectorD EigenValues = eigen->GetEigenValues();
-
-  ncuts = 5;
+  // Put 5 cuts in
+  ncuts = 10;
 
   // Loop over the cuts
   for (int i = 0; i < ncuts; ++i) {
-
-    nvals = (i+1)*npars/ncuts;
+    // Number of eigen values for this cut
+    int nvals = (i+1)*npars/ncuts;
     std::cout << "Cutting on " << nvals << " eigen values" << std::endl;
 
     // The reduced eigenvector matrix
-    TMatrixD transfer_temp(EigenVectors.GetSub(0, EigenVectors.GetNcols()-1, 0, nvals-1));
+    TMatrixD transfer_temp(eigenvec->GetSub(0, eigenvec->GetNcols()-1, 0, nvals-1));
     transfer.push_back(transfer_temp);
 
     // The transposed transfer matrix
@@ -123,15 +119,13 @@ void MatrixCollect::ConstructNew() {
     // The eigen value matrix
     TMatrixD reduced(nvals, nvals);
     reduced.Zero();
+    // Write in the diagonal eigen-values 
     for (int i = 0; i < nvals; ++i) {
-      reduced(i,i) = EigenValues(i);
+      reduced(i,i) = (*eigenval)(i);
     }
 
     // The recreated matrix
-    TMatrixD temp = transfer_temp*reduced;
-    TMatrixD temp2 = temp*transferT_temp;
-
-    TMatrixD *newmat_temp = new TMatrixD(temp2);
+    TMatrixD *newmat_temp = new TMatrixD(transfer_temp*reduced*transferT_temp);
 
     // push back the final matrix
     newmat.push_back(newmat_temp);
@@ -156,30 +150,52 @@ void MatrixCollect::TestMatrix() {
   } else {
     std::cout << "Decomposed new matrix" << std::endl;
   }
+  // Get the TMatrixD of the Cholesky decomposition
   TMatrixD cholmat(chol.GetU());
+  // And transpose it
+  cholmat.T();
 
-  // Propagate the throw through the transfer matrix to the eigenbasis
-  TMatrixD main_transfer = transfer.back();
+  for (int i = 0; i < ncuts; ++i) {
+    TH2D *eigenthrows = new TH2D(Form("EigenThrow_%i", transfer[i].GetNcols()), Form("EigenThrow_%i;Parameter number; Parameter value", transfer[i].GetNcols()), npars, 0, npars, 1000, -1, 1);
+    Throws.push_back(eigenthrows);
+  }
 
   // Loop over the throws and make 
   for (int i = 0; i < nthrows; ++i) {
-    //if (i%(nthrows/5) == 0) std::cout << "On throw " << i << "/" << nthrows << std::endl;
+
+    // Be kind and verbose
+    if (i%(nthrows/20) == 0) std::cout << "On throw " << i << "/" << nthrows << " (" << double(i)/nthrows*100 << "%)" << std::endl;
+
     // Make Gaussian variations around the nominal
     for (int j = 0; j < npars; ++j) {
       (*randoms)(j) = RandNo->Gaus(0, 1);
     }
-    // The throw of parameters
+
+    // The throw of parameters in the full matrix
     TVectorD newthrow = cholmat*(*randoms);
 
-    // The throw of the parameters in the eigen basis
-    TVectorD newthrow_basis = main_transfer*newthrow;
+    // Now go through the eigen value cuts
+    for (int j = 0; j < ncuts; ++j) {
+      // The dimensions of the transfer matrix is the number of eigenvalues
+      int neigen = transfer[j].GetNcols();
+      // Make a smaller array of random numbers
+      TVectorD randoms_eigen(neigen);
+      for (int k = 0; k < neigen; ++k) randoms_eigen(k) = (*randoms)(k);
+      // Now multiply this random number vector from the eigen basis to parameter basis via transfer matrix
+      // And now the random taking the correlation into account
+      TVectorD rands_chol_eigen = (cholmat)*(transfer[j]*randoms_eigen);
+      // Loop over the parameters and fill
+      for (int k = 0; k < npars; ++k) Throws[j]->Fill(k, rands_chol_eigen(k));
+    } // End the cut loop
+  } // End the throw loop
 
-    newthrow_basis.Print();
+  // Normalise the throws
+  //for (int i = 0; i < ncuts; ++i) Throws[i]->Scale(1/nthrows);
 
-    // Now have a throw in the eigenbasis
-  }
-
-}
+  // Delete allocated memory
+  delete RandNo;
+  delete randoms;
+} // End the function
 
 // Want to write
 // Original matrix
@@ -253,7 +269,11 @@ void MatrixCollect::Write(std::string filename) {
     temp_th2->Write(Form("Recreated_%i_RelNom", i));
     // Make percentage difference
     temp_th2_copy->Write(Form("Recreated_%i_RelNomPercent", i));
+
+    // And now the throws
+    Throws[i]->Write();
   }
+
 
   // Close the file
   std::cout << "Wrote output to " << output->GetName() << std::endl;
@@ -268,6 +288,7 @@ void makedecomp(std::string filename) {
   // The collection of matrices
   //TMatrixDSym *mat = (TMatrixDSym*)file->Get("Covariance_Matrix")->Clone();
   TMatrixDSym *mat = (TMatrixDSym*)file->Get("nddet_cov")->Clone();
+  file->Close();
 
   // Create the large object
   MatrixCollect matobj(mat);
@@ -275,6 +296,7 @@ void makedecomp(std::string filename) {
   // Construct all the new matrices
   matobj.ConstructNew();
 
+  // Test the new matrices
   matobj.TestMatrix();
 
   // Write to file
@@ -282,6 +304,7 @@ void makedecomp(std::string filename) {
 }
 
 int main(int argc, char **argv) {
+
   if (argc != 2) {
     std::cout << "Need one argument, the filename" << std::endl;
     return -1;
