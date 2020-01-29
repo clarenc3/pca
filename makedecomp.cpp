@@ -1,6 +1,7 @@
 #include "TMatrixD.h"
 #include "TRandom3.h"
 #include "TMatrixDSymEigen.h"
+//#include "TMatrixTDiag.h"
 #include "TVectorD.h"
 #include "TMatrixDSym.h"
 #include "TDecompSVD.h"
@@ -79,22 +80,6 @@ MatrixCollect::MatrixCollect(TMatrixDSym *input) {
   std::cout << "Done constructing eigen matrix, values and vectors" << std::endl;
 }
 
-int MatrixCollect::HowMany(double cut) {
-  // Now loop through looking for small eigen values
-  int nvals_eigen = 0;
-  for (int i = 0; i < npars; ++i) {
-    if (eigen->GetEigenValues()(i) > cut) nvals_eigen++;
-    if (nvals_eigen > npars) break;
-  }
-  return nvals_eigen;
-}
-
-void MatrixCollect::SetLimits(TH2D *plot) {
-  double maximum = plot->GetMaximum() > fabs(plot->GetMinimum()) ? plot->GetMaximum() : fabs(plot->GetMinimum());
-  plot->SetMaximum(maximum);
-  plot->SetMinimum(-1*maximum);
-}
-
 // Construct the reduced matrix
 void MatrixCollect::ConstructNew() {
 
@@ -105,17 +90,11 @@ void MatrixCollect::ConstructNew() {
   for (int i = 0; i < ncuts; ++i) {
     // Number of eigen values for this cut
     int nvals = (i+1)*npars/ncuts;
+    // Just cut the first one
     std::cout << "Cutting on " << nvals << " eigen values" << std::endl;
 
-    // The reduced eigenvector matrix
-    TMatrixD transfer_temp(eigenvec->GetSub(0, eigenvec->GetNcols()-1, 0, nvals-1));
-
-    //std::cout << "Transfer:" << std::endl;
-    //transfer_temp.Print();
-    //std::cout << "eigenvec:" << std::endl;
-    //eigenvec->Print();
-    //throw;
-
+    // The transfer matrix
+    TMatrixD transfer_temp(eigenvec->GetSub(0, eigenvec->GetNrows()-1, 0, nvals-1));
     transfer.push_back(transfer_temp);
 
     // The transposed transfer matrix
@@ -185,19 +164,25 @@ void MatrixCollect::TestMatrix() {
     for (int j = 0; j < ncuts; ++j) {
       // The dimensions of the transfer matrix is the number of eigenvalues
       int neigen = transfer[j].GetNcols();
-      // Make a smaller array of random numbers
+      // Make a smaller array of random numbers * sqrt(eigenval)
       TVectorD randoms_eigen(neigen);
-      for (int k = 0; k < neigen; ++k) randoms_eigen(k) = (*randoms)(k);
+      for (int k = 0; k < neigen; ++k) {
+        // Multiply the random variations by the sqrt of eigen val (used later for randX = evec*sqrt(eval)*randY)
+        randoms_eigen(k) = RandNo->Gaus(0,1)*sqrt((*eigenval)(k));
+      }
+
       // Now multiply this random number vector from the eigen basis to parameter basis via transfer matrix
       // And now the random taking the correlation into account
-      TVectorD rands_chol_eigen = (cholmat)*(transfer[j]*randoms_eigen);
+      // N.B. this didn't work...
+      //TVectorD rands_chol_eigen = (cholmat)*(transfer[j]*randoms_eigen);
+
+      // Try instead rand = evec*sqrt(eval)*rand
+      // randoms_eigen already contains sqrt(eigenval)
+      TVectorD rands_chol_eigen = transfer[j]*randoms_eigen;
       // Loop over the parameters and fill
       for (int k = 0; k < npars; ++k) Throws[j]->Fill(k, rands_chol_eigen(k));
     } // End the cut loop
   } // End the throw loop
-
-  // Normalise the throws
-  //for (int i = 0; i < ncuts; ++i) Throws[i]->Scale(1/nthrows);
 
   // Delete allocated memory
   delete RandNo;
@@ -213,7 +198,7 @@ void MatrixCollect::TestMatrix() {
 void MatrixCollect::Write(std::string filename) {
 
   // The output file
-  TFile *output = new TFile(Form("%s_test.root", filename.c_str()), "recreate");
+  TFile *output = new TFile(Form("%s_pca_anal.root", filename.c_str()), "recreate");
 
   // Make a TH2D of the original matrix
   TH2D *OrigTH2 = new TH2D("Original_Matrix", "Original_Matrix", npars, 0, npars, npars, 0, npars); 
@@ -254,6 +239,9 @@ void MatrixCollect::Write(std::string filename) {
     EigenVals_cum->SetBinContent(i+1, eigen_cum/eigentot);
   }
   EigenVals_cum->Write("Eigen_Values_cum");
+
+  // Write the eigen vectors
+  eigenvec->Write("Eigen_Vectors");
 
   // Loop over each of the new matrices
   TH2D *temp_th2 = new TH2D("temp_th2", "temp_th2", npars, 0, npars, npars, 0, npars);
